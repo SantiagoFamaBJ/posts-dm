@@ -37,6 +37,7 @@ function base(rev: Revendedor): PostConfig {
     mostrarDireccion: false,
     escalaProducto: 1,
     rotacion: 0,
+    sombra: true,
     fondoLogo: false,
     posProducto: CERO,
     posLogo: CERO,
@@ -47,7 +48,7 @@ function base(rev: Revendedor): PostConfig {
 // Preferencias de diseño que se recuerdan entre posteos
 const RECORDAR: (keyof PostConfig)[] = [
   "plantilla", "formato", "fondo", "mostrarCta", "ctaTexto", "mostrarLogoMarca",
-  "mostrarWhatsapp", "mostrarInstagram", "mostrarDireccion", "mostrarBeneficios", "fondoLogo",
+  "mostrarWhatsapp", "mostrarInstagram", "mostrarDireccion", "mostrarBeneficios", "fondoLogo", "sombra",
 ];
 
 export default function Editor({ revInicial }: { revInicial: Revendedor }) {
@@ -91,9 +92,52 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
     if (prefs) setCfg((c) => ({ ...c, ...prefs }));
   }, [clave]);
 
-  const set = useCallback(<K extends keyof PostConfig>(k: K, v: PostConfig[K]) => {
-    setCfg((c) => ({ ...c, [k]: v }));
+  // Historial para "Deshacer": agrupa cambios seguidos del mismo campo (ej: tipear o deslizar)
+  const historial = useRef<PostConfig[]>([]);
+  const ultimo = useRef<{ k: string; t: number }>({ k: "", t: 0 });
+  const [hayHistorial, setHayHistorial] = useState(false);
+  const guardar = useCallback((c: PostConfig, k: string) => {
+    const ahora = Date.now();
+    if (k !== "*" && ultimo.current.k === k && ahora - ultimo.current.t < 1200) {
+      ultimo.current.t = ahora;
+      return;
+    }
+    ultimo.current = { k, t: ahora };
+    historial.current = [...historial.current.slice(-49), c];
+    setHayHistorial(true);
   }, []);
+  const cambiar = useCallback(
+    (k: string, f: (c: PostConfig) => PostConfig) => {
+      setCfg((c) => {
+        guardar(c, k);
+        return f(c);
+      });
+    },
+    [guardar],
+  );
+  const set = useCallback(
+    <K extends keyof PostConfig>(k: K, v: PostConfig[K]) => cambiar(k, (c) => ({ ...c, [k]: v })),
+    [cambiar],
+  );
+  const deshacer = useCallback(() => {
+    const prev = historial.current.pop();
+    if (prev) {
+      ultimo.current = { k: "", t: 0 };
+      setCfg(prev);
+    }
+    setHayHistorial(historial.current.length > 0);
+  }, []);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && tag !== "INPUT" && tag !== "TEXTAREA") {
+        e.preventDefault();
+        deshacer();
+      }
+    };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [deshacer]);
 
   // guardar preferencias
   useEffect(() => {
@@ -105,6 +149,8 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
   function elegir(p: Producto) {
     setProducto(p);
     setFotoPropia(null);
+    historial.current = [];
+    setHayHistorial(false);
     const m = marcas.find((x) => x.id === p.marca_id);
     setCfg((c) => ({
       ...c,
@@ -167,6 +213,7 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
     const el = tocado(p);
     if (!el) return;
     e.currentTarget.setPointerCapture(e.pointerId);
+    guardar(cfg, "*");
     arrastre.current = { el, x: p.x, y: p.y, orig: cfg[POS[el]] || CERO };
     setHover(el);
   }
@@ -180,14 +227,14 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
     const { w, h } = FORMATOS[cfg.formato];
     const nx = Math.max(-w, Math.min(w, a.orig.x + p.x - a.x));
     const ny = Math.max(-h, Math.min(h, a.orig.y + p.y - a.y));
-    set(POS[a.el], { x: Math.round(nx), y: Math.round(ny) });
+    setCfg((c) => ({ ...c, [POS[a.el]]: { x: Math.round(nx), y: Math.round(ny) } }));
   }
   function onUp() {
     arrastre.current = null;
   }
   const hayMovidos = [cfg.posProducto, cfg.posLogo, cfg.posBadge].some((p) => p && (p.x || p.y)) || !!cfg.rotacion;
   function restablecer() {
-    setCfg((c) => ({ ...c, posProducto: CERO, posLogo: CERO, posBadge: CERO, rotacion: 0 }));
+    cambiar("*", (c) => ({ ...c, posProducto: CERO, posLogo: CERO, posBadge: CERO, rotacion: 0 }));
   }
 
   async function descargar() {
@@ -308,12 +355,19 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
           {producto && (
             <p className="mt-2 text-center text-sm text-neutral-500">
               Arrastrá el producto, el logo o la etiqueta para moverlos
+            </p>
+          )}
+          {producto && (hayHistorial || hayMovidos) && (
+            <div className="mt-2 flex justify-center gap-2">
+              <button className="btn-ghost px-3 py-1.5" disabled={!hayHistorial} onClick={deshacer} title="Ctrl+Z">
+                ↶ Deshacer
+              </button>
               {hayMovidos && (
-                <button className="ml-2 font-bold text-dm" onClick={restablecer}>
-                  Restablecer
+                <button className="btn-ghost px-3 py-1.5" onClick={restablecer}>
+                  Restablecer posiciones
                 </button>
               )}
-            </p>
+            </div>
           )}
           <div className="mt-3 hidden gap-3 lg:flex">
             <button className="btn-dm flex-1 py-3.5 text-base" disabled={!producto || descargando} onClick={descargar}>
@@ -373,7 +427,7 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
               {(Object.keys(PLANTILLAS) as Plantilla[]).map((p) => (
                 <button
                   key={p}
-                  onClick={() => setCfg((c) => ({ ...c, plantilla: p, posProducto: CERO, posLogo: CERO, posBadge: CERO }))}
+                  onClick={() => cambiar("*", (c) => ({ ...c, plantilla: p, posProducto: CERO, posLogo: CERO, posBadge: CERO }))}
                   className={`rounded-xl border-2 p-2.5 text-left transition ${cfg.plantilla === p ? "border-dm bg-dm/5" : "border-neutral-200"}`}
                 >
                   <MiniPlantilla p={p} color={cfg.colorAcento} />
@@ -389,7 +443,7 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
                 {(Object.keys(FORMATOS) as Formato[]).map((f) => (
                   <button
                     key={f}
-                    onClick={() => setCfg((c) => ({ ...c, formato: f, posProducto: CERO, posLogo: CERO, posBadge: CERO }))}
+                    onClick={() => cambiar("*", (c) => ({ ...c, formato: f, posProducto: CERO, posLogo: CERO, posBadge: CERO }))}
                     className={`flex flex-col items-center gap-1.5 rounded-xl border-2 py-2.5 text-xs font-bold transition ${cfg.formato === f ? "border-dm bg-dm/5 text-dm" : "border-neutral-200 text-neutral-600"}`}
                   >
                     <span
@@ -484,6 +538,7 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
                 )}
               </div>
             )}
+            {producto && <Toggle on={cfg.sombra !== false} onChange={(v) => set("sombra", v)} label="Sombra debajo del producto" />}
           </Seccion>
 
           <Seccion titulo="Textos" numero={3}>

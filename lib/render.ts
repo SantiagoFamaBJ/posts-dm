@@ -696,9 +696,11 @@ function dibujarProducto(
     // foto con fondo blanco sobre fondo oscuro: tarjeta blanca
     ctx.save();
     rotar();
-    ctx.shadowColor = "rgba(0,0,0,0.35)";
-    ctx.shadowBlur = 50;
-    ctx.shadowOffsetY = 18;
+    if (cfg.sombra !== false) {
+      ctx.shadowColor = "rgba(0,0,0,0.35)";
+      ctx.shadowBlur = 50;
+      ctx.shadowOffsetY = 18;
+    }
     ctx.fillStyle = "#ffffff";
     rr(ctx, r.x - 28, r.y - 28, r.w + 56, r.h + 56, 36);
     ctx.fill();
@@ -709,6 +711,7 @@ function dibujarProducto(
   }
 
   // sombra en el piso (no rota)
+  if (cfg.sombra !== false) {
   ctx.save();
   const piso = cy + zh / 2;
   const sg = ctx.createRadialGradient(cx, piso, 0, cx, piso, zw * 0.5);
@@ -719,11 +722,12 @@ function dibujarProducto(
   ctx.ellipse(cx, piso - 6, zw * 0.45, 26, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
+  }
 
   ctx.save();
   rotar();
   if (!imgProducto.transparente) ctx.globalCompositeOperation = "multiply";
-  else {
+  else if (cfg.sombra !== false) {
     ctx.shadowColor = "rgba(0,0,0,0.18)";
     ctx.shadowBlur = 30;
     ctx.shadowOffsetY = 14;

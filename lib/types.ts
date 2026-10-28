@@ -66,6 +66,7 @@ export type PostConfig = {
   mostrarDireccion: boolean;
   escalaProducto: number;
   rotacion: number;
+  sombra: boolean;
   fondoLogo: boolean;
   posProducto: Punto;
   posLogo: Punto;
