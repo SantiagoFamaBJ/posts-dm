@@ -28,11 +28,11 @@ export async function POST(req: Request) {
   const ids = lote.map((p) => p.wc_id).filter((x): x is number => !!x);
   const skus = lote.map((p) => p.sku).filter((x): x is string => !!x);
   const [porId, porSku] = await Promise.all([
-    ids.length ? sb.from("posts_productos").select("id, wc_id, imagen_url").in("wc_id", ids) : Promise.resolve({ data: [] }),
-    skus.length ? sb.from("posts_productos").select("id, sku, imagen_url").in("sku", skus) : Promise.resolve({ data: [] }),
+    ids.length ? sb.from("posts_productos").select("id, wc_id, imagen_url, beneficios_ok").in("wc_id", ids) : Promise.resolve({ data: [] }),
+    skus.length ? sb.from("posts_productos").select("id, sku, imagen_url, beneficios_ok").in("sku", skus) : Promise.resolve({ data: [] }),
   ]);
-  const mapaId = new Map((porId.data || []).map((x: { wc_id: number; id: string; imagen_url: string | null }) => [x.wc_id, x]));
-  const mapaSku = new Map((porSku.data || []).map((x: { sku: string; id: string; imagen_url: string | null }) => [x.sku, x]));
+  const mapaId = new Map((porId.data || []).map((x: { wc_id: number; id: string; imagen_url: string | null; beneficios_ok: boolean }) => [x.wc_id, x]));
+  const mapaSku = new Map((porSku.data || []).map((x: { sku: string; id: string; imagen_url: string | null; beneficios_ok: boolean }) => [x.sku, x]));
 
   let nuevos = 0;
   let actualizados = 0;
@@ -64,7 +64,8 @@ export async function POST(req: Request) {
         ...(marca_id || !existe ? { marca_id } : {}),
         imagen_url,
         descripcion: limpiarHtml(p.html_corto || p.html_largo).slice(0, 1000) || null,
-        beneficios: extraerBeneficios(p.html_corto || "", p.html_largo || ""),
+        // los beneficios redactados a mano no se pisan
+        ...(existe?.beneficios_ok ? {} : { beneficios: extraerBeneficios(p.html_corto || "", p.html_largo || "") }),
         precio: p.precio,
         precio_anterior: p.precio_anterior,
         categoria: p.categoria,
