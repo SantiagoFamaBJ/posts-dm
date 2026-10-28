@@ -1,14 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, subirImagen } from "@/lib/client";
 import type { Marca, Producto, Revendedor } from "@/lib/types";
 import { Aviso, Campo, LogoDM, Modal, Toggle } from "./ui";
 
-type Tab = "productos" | "importar" | "marcas" | "revendedores" | "stats";
+type Tab = "productos" | "importar" | "png" | "marcas" | "revendedores" | "stats";
 const TABS: { id: Tab; label: string }[] = [
   { id: "productos", label: "Productos" },
   { id: "importar", label: "Importar de la web" },
+  { id: "png", label: "Fotos PNG" },
   { id: "marcas", label: "Marcas" },
   { id: "revendedores", label: "Revendedores" },
   { id: "stats", label: "Estadísticas" },
@@ -103,6 +104,7 @@ export default function Admin() {
       <main className="mx-auto max-w-6xl px-4 pt-5">
         {tab === "productos" && <Productos marcas={marcas} productos={productos} recargar={cargar} avisar={avisar} irImportar={() => setTab("importar")} />}
         {tab === "importar" && <Importar marcas={marcas} recargar={cargar} avisar={avisar} />}
+        {tab === "png" && <FotosPng productos={productos} recargar={cargar} avisar={avisar} />}
         {tab === "marcas" && <Marcas marcas={marcas} productos={productos} recargar={cargar} avisar={avisar} />}
         {tab === "revendedores" && <Revendedores revs={revs} recargar={cargar} avisar={avisar} />}
         {tab === "stats" && <Stats revs={revs} productos={productos} marcas={marcas} />}
@@ -116,16 +118,38 @@ type Avisar = (t: string, tipo?: "ok" | "error") => void;
 
 /* ───────────── Productos ───────────── */
 
-const VACIO: Partial<Producto> = { nombre: "", marca_id: null, imagen_url: null, beneficios: [], precio: null, precio_anterior: null, categoria: "", activo: true, orden: 0 };
+const VACIO: Partial<Producto> = { nombre: "", sku: "", imagen_png: null, marca_id: null, imagen_url: null, beneficios: [], precio: null, precio_anterior: null, categoria: "", activo: true, orden: 0 };
 
 function Productos({ marcas, productos, recargar, avisar, irImportar }: { marcas: Marca[]; productos: Producto[]; recargar: () => Promise<void>; avisar: Avisar; irImportar: () => void }) {
   const [q, setQ] = useState("");
   const [filtro, setFiltro] = useState("");
+  const [vis, setVis] = useState<"" | "on" | "off" | "sinpng">("");
+  const [limite, setLimite] = useState(150);
+  const [masivo, setMasivo] = useState(false);
   const [edit, setEdit] = useState<Partial<Producto> | null>(null);
-  const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const lista = productos.filter(
-    (p) => (!filtro || (filtro === "_sin" ? !p.marca_id : p.marca_id === filtro)) && (!q || norm(p.nombre).includes(norm(q))),
+    (p) =>
+      (!filtro || (filtro === "_sin" ? !p.marca_id : p.marca_id === filtro)) &&
+      (!vis || (vis === "on" ? p.activo : vis === "off" ? !p.activo : !p.imagen_png)) &&
+      (!q || norm(p.nombre).includes(norm(q)) || norm(p.sku || "").includes(norm(q))),
   );
+  const hayFiltro = !!(q || filtro || vis);
+
+  async function masiva(cambios: { activo?: boolean; marca_id?: string | null }, msg: string) {
+    if (!lista.length) return;
+    if (lista.length > 20 && !confirm(`¿Aplicar a ${lista.length} productos?`)) return;
+    setMasivo(true);
+    try {
+      await api("/api/admin/productos", { method: "PATCH", body: JSON.stringify({ ids: lista.map((p) => p.id), ...cambios }) });
+      await recargar();
+      avisar(msg);
+    } catch (e) {
+      avisar((e as Error).message, "error");
+    } finally {
+      setMasivo(false);
+    }
+  }
 
   async function toggle(p: Producto) {
     await api("/api/admin/productos", { method: "PUT", body: JSON.stringify({ id: p.id, activo: !p.activo }) });
@@ -135,7 +159,7 @@ function Productos({ marcas, productos, recargar, avisar, irImportar }: { marcas
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <input className="campo max-w-xs" placeholder="Buscar…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="campo max-w-xs" placeholder="Buscar nombre o código…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="campo max-w-[200px]" value={filtro} onChange={(e) => setFiltro(e.target.value)}>
           <option value="">Todas las marcas</option>
           {marcas.map((m) => (
@@ -144,6 +168,12 @@ function Productos({ marcas, productos, recargar, avisar, irImportar }: { marcas
             </option>
           ))}
           <option value="_sin">Sin marca asignada</option>
+        </select>
+        <select className="campo max-w-[160px]" value={vis} onChange={(e) => setVis(e.target.value as "" | "on" | "off" | "sinpng")}>
+          <option value="">Visibles y ocultos</option>
+          <option value="on">Solo visibles</option>
+          <option value="off">Solo ocultos</option>
+          <option value="sinpng">Sin foto PNG</option>
         </select>
         <div className="ml-auto flex gap-2">
           <button className="btn-ghost" onClick={irImportar}>
@@ -158,6 +188,33 @@ function Productos({ marcas, productos, recargar, avisar, irImportar }: { marcas
         {lista.length} de {productos.length} productos · {productos.filter((p) => p.activo).length} visibles para revendedores
       </p>
 
+      {hayFiltro && lista.length > 0 && (
+        <div className="tarjeta flex flex-wrap items-center gap-2 p-3">
+          <span className="text-sm font-semibold text-neutral-600">Con los {lista.length} filtrados:</span>
+          <button className="chip" disabled={masivo} onClick={() => masiva({ activo: true }, "Productos visibles")}>
+            Mostrar todos
+          </button>
+          <button className="chip" disabled={masivo} onClick={() => masiva({ activo: false }, "Productos ocultos")}>
+            Ocultar todos
+          </button>
+          <select
+            className="campo max-w-[200px] py-1.5"
+            value=""
+            disabled={masivo}
+            onChange={(e) => e.target.value && masiva({ marca_id: e.target.value === "_sin" ? null : e.target.value }, "Marca asignada")}
+          >
+            <option value="">Asignar marca…</option>
+            {marcas.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.nombre}
+              </option>
+            ))}
+            <option value="_sin">Quitar marca</option>
+          </select>
+          {masivo && <span className="text-sm text-neutral-400">Aplicando…</span>}
+        </div>
+      )}
+
       {productos.length === 0 ? (
         <div className="tarjeta p-10 text-center">
           <p className="font-semibold">Todavía no hay productos.</p>
@@ -168,19 +225,21 @@ function Productos({ marcas, productos, recargar, avisar, irImportar }: { marcas
         </div>
       ) : (
         <div className="grid gap-2">
-          {lista.map((p) => (
+          {lista.slice(0, limite).map((p) => (
             <div key={p.id} className={`tarjeta flex items-center gap-3 p-2.5 ${p.activo ? "" : "opacity-55"}`}>
               <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-lg bg-neutral-50">
-                {p.imagen_url && (
+                {(p.imagen_png || p.imagen_url) && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.imagen_url} alt="" loading="lazy" className="h-full w-full object-contain" />
+                  <img src={p.imagen_png || p.imagen_url || ""} alt="" loading="lazy" className="h-full w-full object-contain" />
                 )}
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold">{p.nombre}</p>
                 <p className="text-sm text-neutral-500">
+                  {p.sku && <span className="font-mono">{p.sku} · </span>}
                   {marcas.find((m) => m.id === p.marca_id)?.nombre || <span className="text-amber-600">Sin marca</span>}
                   {p.precio ? ` · $${p.precio.toLocaleString("es-AR")}` : ""}
+                  {p.imagen_png ? <span className="ml-1.5 rounded bg-emerald-50 px-1.5 text-xs font-bold text-emerald-700">PNG</span> : <span className="ml-1.5 rounded bg-amber-50 px-1.5 text-xs font-bold text-amber-700">sin PNG</span>}
                 </p>
               </div>
               <button onClick={() => toggle(p)} className={`chip hidden text-xs sm:block ${p.activo ? "" : "border-amber-300 bg-amber-50 text-amber-700"}`}>
@@ -191,6 +250,11 @@ function Productos({ marcas, productos, recargar, avisar, irImportar }: { marcas
               </button>
             </div>
           ))}
+          {lista.length > limite && (
+            <button className="btn-ghost" onClick={() => setLimite((l) => l + 300)}>
+              Ver más ({lista.length - limite} restantes)
+            </button>
+          )}
         </div>
       )}
 
@@ -222,10 +286,24 @@ function FormProducto({ inicial, marcas, onListo, avisar }: { inicial: Partial<P
   const [subiendo, setSubiendo] = useState(false);
   const set = (k: string, v: unknown) => setP((s) => ({ ...s, [k]: v }));
 
+  async function subir(f: File | undefined, campo: "imagen_url" | "imagen_png") {
+    if (!f) return;
+    setSubiendo(true);
+    try {
+      set(campo, await subirImagen(f, campo === "imagen_png" ? "png" : "productos"));
+    } catch (er) {
+      avisar((er as Error).message, "error");
+    } finally {
+      setSubiendo(false);
+    }
+  }
+
   async function guardar() {
     const body = {
       id: p.id,
       nombre: p.nombre,
+      sku: p.sku || null,
+      imagen_png: p.imagen_png || null,
       marca_id: p.marca_id || null,
       imagen_url: p.imagen_url || null,
       beneficios: p.beneficiosTxt.split("\n").map((s) => s.trim()).filter(Boolean),
@@ -253,40 +331,48 @@ function FormProducto({ inicial, marcas, onListo, avisar }: { inicial: Partial<P
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-4">
-        <div className="grid h-28 w-28 shrink-0 place-items-center overflow-hidden rounded-2xl border border-neutral-200 bg-white">
-          {p.imagen_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={p.imagen_url} alt="" className="h-full w-full object-contain" />
-          ) : (
-            <span className="text-xs text-neutral-400">Sin imagen</span>
-          )}
-        </div>
-        <label className="btn-ghost cursor-pointer">
-          {subiendo ? "Subiendo…" : "Cambiar imagen"}
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={async (e) => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              setSubiendo(true);
-              try {
-                set("imagen_url", await subirImagen(f, "productos"));
-              } catch (er) {
-                avisar((er as Error).message, "error");
-              } finally {
-                setSubiendo(false);
-              }
-            }}
-          />
-        </label>
+      <div className="grid grid-cols-2 gap-3">
+        {(
+          [
+            ["imagen_png", "Foto PNG sin fondo", "La que se usa en los posteos"],
+            ["imagen_url", "Foto de la web", "Se usa si no hay PNG"],
+          ] as const
+        ).map(([campo, titulo, sub]) => (
+          <div key={campo} className="space-y-2">
+            <div>
+              <p className="text-sm font-bold">{titulo}</p>
+              <p className="text-xs text-neutral-400">{sub}</p>
+            </div>
+            <div className="grid aspect-square place-items-center overflow-hidden rounded-2xl border border-neutral-200 bg-[repeating-conic-gradient(#f2f2f2_0_25%,#fff_0_50%)] bg-[length:16px_16px]">
+              {p[campo] ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p[campo] || ""} alt="" className="h-full w-full object-contain p-2" />
+              ) : (
+                <span className="text-xs text-neutral-400">Sin imagen</span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <label className="btn-ghost cursor-pointer px-3 py-1.5 text-xs">
+                {subiendo ? "Subiendo…" : p[campo] ? "Cambiar" : "Subir"}
+                <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => subir(e.target.files?.[0], campo)} />
+              </label>
+              {p[campo] && (
+                <button type="button" className="text-xs text-neutral-500 underline" onClick={() => set(campo, null)}>
+                  Quitar
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
-      <p className="-mt-2 text-xs text-neutral-400">Tip: un PNG sin fondo queda mucho mejor en las plantillas.</p>
-      <Campo label="Nombre">
-        <input className="campo" value={p.nombre || ""} onChange={(e) => set("nombre", e.target.value)} />
-      </Campo>
+      <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
+        <Campo label="Nombre">
+          <input className="campo" value={p.nombre || ""} onChange={(e) => set("nombre", e.target.value)} />
+        </Campo>
+        <Campo label="Código">
+          <input className="campo font-mono" value={p.sku || ""} onChange={(e) => set("sku", e.target.value)} />
+        </Campo>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Campo label="Marca">
           <select className="campo" value={p.marca_id || ""} onChange={(e) => set("marca_id", e.target.value)}>
@@ -341,6 +427,96 @@ type ItemWc = {
   marca: string | null;
   importado: boolean;
 };
+
+function ImportarTodo({ recargar, avisar }: { recargar: () => Promise<void>; avisar: Avisar }) {
+  const [ocultos, setOcultos] = useState(true);
+  const [saltar, setSaltar] = useState(true);
+  const [estado, setEstado] = useState<{ corriendo: boolean; hechos: number; total: number; nuevos: number; errores: number; pagina: number; paginas: number } | null>(null);
+  const parar = useRef(false);
+
+  async function correr() {
+    if (!confirm("Se van a recorrer todos los productos de dentalmedrano.com.ar. Puede tardar varios minutos: dejá esta pestaña abierta. ¿Arrancamos?")) return;
+    parar.current = false;
+    const e = { corriendo: true, hechos: 0, total: 0, nuevos: 0, errores: 0, pagina: 0, paginas: 1 };
+    setEstado({ ...e });
+    try {
+      for (let page = 1; page <= e.paginas; page++) {
+        if (parar.current) break;
+        let r: { items: ItemWc[]; total: number; paginas: number } | null = null;
+        for (let intento = 0; intento < 3 && !r; intento++) {
+          try {
+            r = await api(`/api/admin/importar?q=&page=${page}`);
+          } catch {
+            await new Promise((ok) => setTimeout(ok, 2000));
+          }
+        }
+        if (!r) throw new Error(`No se pudo leer la página ${page} de la tienda`);
+        e.paginas = r.paginas;
+        e.total = r.total;
+        e.pagina = page;
+        for (let i = 0; i < r.items.length; i += 8) {
+          if (parar.current) break;
+          const lote = r.items.slice(i, i + 8);
+          try {
+            const res = await api<{ resultados: { ok: boolean; salteado?: boolean }[] }>("/api/admin/importar", {
+              method: "POST",
+              body: JSON.stringify({ items: lote, ocultos, saltarExistentes: saltar }),
+            });
+            e.nuevos += res.resultados.filter((x) => x.ok && !x.salteado).length;
+            e.errores += res.resultados.filter((x) => !x.ok).length;
+          } catch {
+            e.errores += lote.length;
+          }
+          e.hechos += lote.length;
+          setEstado({ ...e });
+        }
+      }
+      await recargar();
+      avisar(parar.current ? `Importación pausada: ${e.nuevos} nuevos` : `¡Listo! ${e.nuevos} productos importados`);
+    } catch (er) {
+      avisar((er as Error).message, "error");
+    } finally {
+      e.corriendo = false;
+      setEstado({ ...e });
+    }
+  }
+
+  const pct = estado && estado.total ? Math.round((estado.hechos / estado.total) * 100) : 0;
+
+  return (
+    <div className="tarjeta space-y-3 border-dm/30 bg-dm/[0.03] p-4">
+      <div>
+        <h3 className="font-extrabold">Importar todo el catálogo</h3>
+        <p className="text-[15px] text-neutral-600">Recorre la web completa y trae todos los productos. Ideal para la primera carga.</p>
+      </div>
+      <div className="divide-y divide-neutral-100 rounded-xl bg-white px-3">
+        <Toggle on={ocultos} onChange={setOcultos} label="Importar como ocultos" sub="Después mostrás por marca los que quieras que vean los revendedores" />
+        <Toggle on={saltar} onChange={setSaltar} label="Saltar los que ya están" sub="Más rápido. Apagalo para actualizar precios y fotos" />
+      </div>
+      {estado && (
+        <div className="space-y-1.5">
+          <div className="h-3 overflow-hidden rounded-full bg-neutral-200">
+            <div className="h-full rounded-full bg-dm transition-all" style={{ width: `${pct}%` }} />
+          </div>
+          <p className="text-sm text-neutral-600">
+            {estado.hechos} de {estado.total || "…"} revisados · {estado.nuevos} importados
+            {estado.errores ? ` · ${estado.errores} con error` : ""}
+            {estado.corriendo ? ` · página ${estado.pagina}/${estado.paginas}` : " · terminado"}
+          </p>
+        </div>
+      )}
+      {estado?.corriendo ? (
+        <button className="btn-ghost w-full" onClick={() => (parar.current = true)}>
+          Pausar
+        </button>
+      ) : (
+        <button className="btn-dm w-full py-3" onClick={correr}>
+          {estado ? "Volver a correr" : "Importar todo"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 function Importar({ marcas, recargar, avisar }: { marcas: Marca[]; recargar: () => Promise<void>; avisar: Avisar }) {
   const [q, setQ] = useState("");
@@ -400,7 +576,9 @@ function Importar({ marcas, recargar, avisar }: { marcas: Marca[]; recargar: () 
 
   return (
     <div className="space-y-4">
+      <ImportarTodo recargar={recargar} avisar={avisar} />
       <div className="tarjeta space-y-3 p-4">
+        <h3 className="font-extrabold">Importar productos puntuales</h3>
         <p className="text-[15px] text-neutral-600">
           Buscá por nombre, marca o pegá el link de un producto de <strong>dentalmedrano.com.ar</strong>. Se copian nombre, foto, beneficios y precio. Después podés editar todo.
         </p>
@@ -480,6 +658,169 @@ function Importar({ marcas, recargar, avisar }: { marcas: Marca[]; recargar: () 
             </button>
           )}
           <p className="text-xs text-neutral-400">Si un producto ya estaba importado, se actualiza con los datos de la web.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ───────────── Fotos PNG (carga masiva) ───────────── */
+
+const clave = (t: string) =>
+  t
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+type Archivo = { file: File; preview: string; producto: Producto | null; estado: "pendiente" | "ok" | "error" };
+
+function FotosPng({ productos, recargar, avisar }: { productos: Producto[]; recargar: () => Promise<void>; avisar: Avisar }) {
+  const [archivos, setArchivos] = useState<Archivo[]>([]);
+  const [reemplazar, setReemplazar] = useState(true);
+  const [subiendo, setSubiendo] = useState(false);
+  const [arrastrando, setArrastrando] = useState(false);
+
+  const indice = useMemo(() => {
+    const porSku = new Map<string, Producto>();
+    const porNombre = new Map<string, Producto>();
+    productos.forEach((p) => {
+      if (p.sku && !porSku.has(clave(p.sku))) porSku.set(clave(p.sku), p);
+      if (!porNombre.has(clave(p.nombre))) porNombre.set(clave(p.nombre), p);
+    });
+    return { porSku, porNombre };
+  }, [productos]);
+
+  function buscar(nombreArchivo: string) {
+    const base = nombreArchivo.replace(/\.[^.]+$/, "");
+    const variantes = [base, base.replace(/\s*\(\d+\)$/, ""), base.replace(/[_\s-]\d{1,2}$/, ""), base.split(/[\s_]/)[0]];
+    for (const v of variantes) {
+      const k = clave(v);
+      if (k && indice.porSku.has(k)) return indice.porSku.get(k)!;
+    }
+    return indice.porNombre.get(clave(base)) || null;
+  }
+
+  function agregar(lista: FileList | File[]) {
+    const nuevos = [...lista]
+      .filter((f) => /image\/(png|jpeg|webp)/.test(f.type))
+      .map((file) => ({ file, preview: URL.createObjectURL(file), producto: buscar(file.name), estado: "pendiente" as const }));
+    setArchivos((a) => [...a, ...nuevos]);
+  }
+
+  const aSubir = archivos.filter((a) => a.producto && a.estado !== "ok" && (reemplazar || !a.producto.imagen_png));
+  const sinMatch = archivos.filter((a) => !a.producto);
+  const faltantes = productos.filter((p) => p.activo && !p.imagen_png);
+
+  async function subirTodo() {
+    setSubiendo(true);
+    const cola = [...aSubir];
+    let ok = 0;
+    const trabajar = async () => {
+      while (cola.length) {
+        const a = cola.shift()!;
+        try {
+          const url = await subirImagen(a.file, "png");
+          await api("/api/admin/productos", { method: "PUT", body: JSON.stringify({ id: a.producto!.id, imagen_png: url }) });
+          a.estado = "ok";
+          ok++;
+        } catch {
+          a.estado = "error";
+        }
+        setArchivos((x) => [...x]);
+      }
+    };
+    await Promise.all([trabajar(), trabajar(), trabajar()]);
+    await recargar();
+    setSubiendo(false);
+    avisar(`${ok} fotos cargadas`);
+  }
+
+  async function copiarFaltantes() {
+    const txt = faltantes.map((p) => `${p.sku || "(sin código)"}\t${p.nombre}`).join("\n");
+    try {
+      await navigator.clipboard.writeText(txt);
+      avisar(`${faltantes.length} productos copiados (pegalos en Excel)`);
+    } catch {
+      avisar("No se pudo copiar", "error");
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="tarjeta space-y-2 p-4">
+        <h3 className="font-extrabold">Carga masiva de fotos PNG</h3>
+        <p className="text-[15px] text-neutral-600">
+          Nombrá cada archivo con el <strong>código del producto</strong> (ej: <span className="font-mono">6510.png</span>) y arrastralos todos juntos. Se asignan solos. También funciona si el archivo tiene el nombre exacto del producto.
+        </p>
+        <p className="text-sm text-neutral-500">
+          Productos visibles sin PNG: <strong>{faltantes.length}</strong>
+          {faltantes.length > 0 && (
+            <button className="ml-2 font-bold text-dm" onClick={copiarFaltantes}>
+              Copiar lista de códigos faltantes
+            </button>
+          )}
+        </p>
+      </div>
+
+      <label
+        onDragOver={(e) => {
+          e.preventDefault();
+          setArrastrando(true);
+        }}
+        onDragLeave={() => setArrastrando(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setArrastrando(false);
+          agregar(e.dataTransfer.files);
+        }}
+        className={`grid cursor-pointer place-items-center rounded-2xl border-2 border-dashed p-10 text-center transition ${arrastrando ? "border-dm bg-dm/5" : "border-neutral-300 bg-white"}`}
+      >
+        <div>
+          <p className="font-display text-lg font-extrabold">Arrastrá las fotos acá</p>
+          <p className="text-neutral-500">o tocá para elegirlas (podés seleccionar cientos juntas)</p>
+        </div>
+        <input type="file" multiple accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => e.target.files && agregar(e.target.files)} />
+      </label>
+
+      {archivos.length > 0 && (
+        <>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm text-neutral-600">
+              {archivos.length} archivos · <strong className="text-emerald-700">{archivos.length - sinMatch.length} encontrados</strong>
+              {sinMatch.length > 0 && <strong className="text-amber-700"> · {sinMatch.length} sin coincidencia</strong>}
+            </span>
+            <div className="w-64 rounded-xl bg-white px-3">
+              <Toggle on={reemplazar} onChange={setReemplazar} label="Reemplazar PNG existentes" />
+            </div>
+            <button className="chip" onClick={() => setArchivos([])} disabled={subiendo}>
+              Limpiar
+            </button>
+            <button className="btn-dm ml-auto" disabled={!aSubir.length || subiendo} onClick={subirTodo}>
+              {subiendo ? `Subiendo… ${archivos.filter((a) => a.estado === "ok").length}/${aSubir.length + archivos.filter((a) => a.estado === "ok").length}` : `Subir ${aSubir.length} fotos`}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+            {archivos.map((a, i) => (
+              <div key={i} className={`tarjeta overflow-hidden border-2 ${a.estado === "ok" ? "border-emerald-500" : a.estado === "error" ? "border-red-500" : a.producto ? "border-transparent" : "border-amber-400"}`}>
+                <div className="aspect-square bg-[repeating-conic-gradient(#f2f2f2_0_25%,#fff_0_50%)] bg-[length:14px_14px] p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={a.preview} alt="" className="h-full w-full object-contain" />
+                </div>
+                <div className="border-t border-neutral-100 p-2">
+                  <p className="truncate font-mono text-[11px] text-neutral-400">{a.file.name}</p>
+                  {a.producto ? (
+                    <p className="line-clamp-2 text-xs font-semibold leading-tight">{a.producto.nombre}</p>
+                  ) : (
+                    <p className="text-xs font-semibold text-amber-700">Sin coincidencia</p>
+                  )}
+                  {a.estado === "ok" && <p className="text-xs font-bold text-emerald-700">✓ Cargada</p>}
+                  {a.estado === "error" && <p className="text-xs font-bold text-red-600">Error, reintentá</p>}
+                  {a.producto?.imagen_png && a.estado === "pendiente" && <p className="text-[11px] text-neutral-400">Ya tenía PNG</p>}
+                </div>
+              </div>
+            ))}
+          </div>
         </>
       )}
     </div>

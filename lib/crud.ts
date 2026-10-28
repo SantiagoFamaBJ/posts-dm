@@ -1,5 +1,5 @@
 import "server-only";
-import { db, esAdmin, json, noAutorizado } from "./server";
+import { db, esAdmin, json, noAutorizado, todasLasFilas } from "./server";
 
 type Limpiar = (body: Record<string, unknown>, creando: boolean) => Record<string, unknown> | string;
 
@@ -8,11 +8,16 @@ export function crud(tabla: string, limpiar: Limpiar, orden: string[] = ["orden"
   return {
     async GET() {
       if (!(await esAdmin())) return noAutorizado();
-      let q = db().from(tabla).select("*");
-      for (const o of orden) q = q.order(o);
-      const { data, error } = await q;
-      if (error) return json({ error: error.message }, 500);
-      return json(data);
+      try {
+        const data = await todasLasFilas(() => {
+          let q = db().from(tabla).select("*");
+          for (const o of orden) q = q.order(o);
+          return q.order("id");
+        });
+        return json(data);
+      } catch (e) {
+        return json({ error: (e as Error).message }, 500);
+      }
     },
     async POST(req: Request) {
       if (!(await esAdmin())) return noAutorizado();

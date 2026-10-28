@@ -5,6 +5,7 @@ import "server-only";
 
 export type WcProducto = {
   wc_id: number;
+  sku: string | null;
   nombre: string;
   url: string;
   imagen: string | null;
@@ -76,6 +77,7 @@ function mapear(p: any): WcProducto {
   const atributoMarca = (p.attributes || []).find((a: { name: string }) => /marca|brand/i.test(a.name));
   return {
     wc_id: p.id,
+    sku: p.sku ? String(p.sku).trim() : null,
     nombre: limpiarHtml(p.name),
     url: p.permalink,
     imagen: elegirImagen(p.images?.[0]),

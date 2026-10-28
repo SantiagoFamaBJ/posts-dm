@@ -34,7 +34,7 @@ export async function prepararImagen(file: File, max = 1400): Promise<File> {
   }
 }
 
-export async function subirImagen(file: File, carpeta: "marcas" | "productos" | "revendedores", slug?: string) {
+export async function subirImagen(file: File, carpeta: "marcas" | "productos" | "png" | "revendedores", slug?: string) {
   const f = await prepararImagen(file);
   const fd = new FormData();
   fd.append("file", f);

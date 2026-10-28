@@ -115,7 +115,7 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
     (async () => {
       await cargarFuentes();
       const [imgProducto, imgMarca, imgRevendedor] = await Promise.all([
-        loadImage(fotoPropia || producto?.imagen_url),
+        loadImage(fotoPropia || producto?.imagen_png || producto?.imagen_url),
         loadImage(marca?.logo_url),
         loadImage(rev.logo_url),
       ]);
@@ -243,16 +243,18 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
           <Seccion titulo="Producto" numero={1}>
             <button onClick={() => setPicker(true)} className="flex w-full items-center gap-3 rounded-xl border border-neutral-200 p-2.5 text-left transition hover:border-dm">
               <span className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-lg bg-neutral-50">
-                {producto?.imagen_url ? (
+                {producto && (producto.imagen_png || producto.imagen_url) ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={producto.imagen_url} alt="" className="h-full w-full object-contain" />
+                  <img src={producto.imagen_png || producto.imagen_url || ""} alt="" className="h-full w-full object-contain" />
                 ) : (
                   <span className="text-2xl text-neutral-300">+</span>
                 )}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-bold">{producto ? producto.nombre : cargando ? "Cargando catálogo…" : "Elegir producto"}</span>
-                <span className="block text-sm text-neutral-500">{producto ? marca?.nombre || "" : `${productos.length} productos disponibles`}</span>
+                <span className="block text-sm text-neutral-500">
+                  {producto ? [marca?.nombre, producto.sku ? `Cód. ${producto.sku}` : ""].filter(Boolean).join(" · ") : `${productos.length} productos disponibles`}
+                </span>
               </span>
               <span className="text-sm font-bold text-dm">{producto ? "Cambiar" : "Elegir"}</span>
             </button>
@@ -521,12 +523,22 @@ function Selector({
 }) {
   const [q, setQ] = useState("");
   const [marca, setMarca] = useState<string | null>(null);
-  const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-  const lista = productos.filter((p) => (!marca || p.marca_id === marca) && (!q || norm(p.nombre).includes(norm(q))));
+  const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const termino = norm(q.trim());
+  const lista = productos
+    .filter((p) => (!marca || p.marca_id === marca) && (!termino || norm(p.nombre).includes(termino) || norm(p.sku || "").includes(termino)))
+    .sort((a, b) => {
+      // si busca un código, el que coincide exacto va primero
+      if (!termino) return 0;
+      const ea = norm(a.sku || "") === termino ? 0 : 1;
+      const eb = norm(b.sku || "") === termino ? 0 : 1;
+      return ea - eb;
+    });
+  const visibles = lista.slice(0, 120);
   const conProductos = marcas.filter((m) => productos.some((p) => p.marca_id === m.id));
   return (
     <Modal abierto={abierto} onCerrar={onCerrar} titulo="Elegí un producto" ancho="max-w-3xl">
-      <input className="campo mb-3" placeholder="Buscar producto…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <input className="campo mb-3" autoFocus placeholder="Buscar por nombre o código…" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="-mx-1 mb-4 flex gap-2 overflow-x-auto px-1 pb-1">
         <button onClick={() => setMarca(null)} className={`chip shrink-0 ${!marca ? "chip-on" : ""}`}>
           Todas
@@ -541,12 +553,12 @@ function Selector({
         <p className="py-10 text-center text-neutral-500">No encontramos productos.</p>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {lista.map((p) => (
+          {visibles.map((p) => (
             <button key={p.id} onClick={() => onElegir(p)} className="tarjeta overflow-hidden text-left transition hover:border-dm hover:shadow-md">
               <span className="block aspect-square bg-white p-3">
-                {p.imagen_url ? (
+                {p.imagen_png || p.imagen_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.imagen_url} alt="" loading="lazy" className="h-full w-full object-contain" />
+                  <img src={p.imagen_png || p.imagen_url || ""} alt="" loading="lazy" className="h-full w-full object-contain" />
                 ) : (
                   <span className="grid h-full place-items-center text-xs text-neutral-400">Sin imagen</span>
                 )}
@@ -554,10 +566,16 @@ function Selector({
               <span className="block border-t border-neutral-100 p-2.5">
                 <span className="block text-[11px] font-bold uppercase tracking-wide text-dm">{marcas.find((m) => m.id === p.marca_id)?.nombre}</span>
                 <span className="line-clamp-2 text-sm font-semibold leading-tight">{p.nombre}</span>
+                {p.sku && <span className="mt-0.5 block text-xs text-neutral-400">Cód. {p.sku}</span>}
               </span>
             </button>
           ))}
         </div>
+      )}
+      {lista.length > visibles.length && (
+        <p className="mt-4 text-center text-sm text-neutral-500">
+          Mostrando {visibles.length} de {lista.length}. Escribí el nombre o código para encontrarlo más rápido.
+        </p>
       )}
     </Modal>
   );

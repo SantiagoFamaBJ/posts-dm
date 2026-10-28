@@ -41,9 +41,22 @@ export async function subirArchivo(path: string, data: ArrayBuffer | Buffer, con
 export function slugify(t: string) {
   return t
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
+}
+
+// Trae todas las filas de una tabla (Supabase corta en 1000 por consulta)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function todasLasFilas<T = any>(armar: () => any): Promise<T[]> {
+  const out: T[] = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data, error } = await armar().range(desde, desde + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
 }

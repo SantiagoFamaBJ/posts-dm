@@ -26,9 +26,19 @@ export async function GET(req: Request) {
 // Importa una lista de productos (los que vienen de la búsqueda)
 export async function POST(req: Request) {
   if (!(await esAdmin())) return noAutorizado();
-  const { items, marca_id } = (await req.json().catch(() => ({}))) as { items?: WcProducto[]; marca_id?: string };
+  const { items, marca_id, ocultos, saltarExistentes } = (await req.json().catch(() => ({}))) as {
+    items?: WcProducto[];
+    marca_id?: string;
+    ocultos?: boolean;
+    saltarExistentes?: boolean;
+  };
   if (!Array.isArray(items) || !items.length) return json({ error: "No hay productos" }, 400);
   const sb = db();
+  let existentes = new Set<number>();
+  if (saltarExistentes) {
+    const { data } = await sb.from("posts_productos").select("wc_id").in("wc_id", items.map((i) => i.wc_id));
+    existentes = new Set((data || []).map((x) => x.wc_id as number));
+  }
   const { data: marcas } = await sb.from("posts_marcas").select("id, nombre");
 
   const detectarMarca = (p: WcProducto) => {
@@ -38,8 +48,12 @@ export async function POST(req: Request) {
     return m?.id || null;
   };
 
-  const resultados: { wc_id: number; ok: boolean; error?: string }[] = [];
+  const resultados: { wc_id: number; ok: boolean; salteado?: boolean; error?: string }[] = [];
   for (const p of items.slice(0, 40)) {
+    if (existentes.has(p.wc_id)) {
+      resultados.push({ wc_id: p.wc_id, ok: true, salteado: true });
+      continue;
+    }
     try {
       let imagen_url: string | null = null;
       if (p.imagen && /^https?:\/\//.test(p.imagen)) {
@@ -52,6 +66,7 @@ export async function POST(req: Request) {
       }
       const fila = {
         wc_id: p.wc_id,
+        sku: p.sku || null,
         nombre: String(p.nombre).slice(0, 160),
         marca_id: detectarMarca(p),
         imagen_url,
@@ -61,7 +76,7 @@ export async function POST(req: Request) {
         precio_anterior: p.precio_anterior,
         categoria: p.categoria,
         url_web: p.url,
-        activo: true,
+        activo: !ocultos,
       };
       const { error } = await sb.from("posts_productos").upsert(fila, { onConflict: "wc_id" });
       resultados.push({ wc_id: p.wc_id, ok: !error, error: error?.message });

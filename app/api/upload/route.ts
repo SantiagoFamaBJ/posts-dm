@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     const { data } = await db().from("posts_revendedores").select("id").eq("slug", slug).eq("activo", true).maybeSingle();
     if (!data) return noAutorizado();
     path = `revendedores/${data.id}-${Date.now()}.${ext}`;
-  } else if (carpeta === "marcas" || carpeta === "productos") {
+  } else if (carpeta === "marcas" || carpeta === "productos" || carpeta === "png") {
     if (!(await esAdmin())) return noAutorizado();
     path = `${carpeta}/${crypto.randomUUID()}.${ext}`;
   } else return json({ error: "Carpeta inválida" }, 400);

@@ -10,9 +10,11 @@ export type Marca = {
 export type Producto = {
   id: string;
   wc_id: number | null;
+  sku: string | null;
   nombre: string;
   marca_id: string | null;
   imagen_url: string | null;
+  imagen_png: string | null;
   descripcion: string | null;
   beneficios: string[];
   precio: number | null;
