@@ -19,7 +19,7 @@ export type WcProducto = {
 
 const BASE = () => (process.env.WC_BASE_URL || "https://dentalmedrano.com.ar").replace(/\/$/, "");
 
-function limpiarHtml(html: string) {
+export function limpiarHtml(html: string) {
   return (html || "")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|li|h\d|div)>/gi, "\n")
@@ -38,7 +38,7 @@ function limpiarHtml(html: string) {
     .join("\n");
 }
 
-function extraerBeneficios(htmlCorto: string, htmlLargo: string) {
+export function extraerBeneficios(htmlCorto: string, htmlLargo: string) {
   const lis = [...(htmlCorto + htmlLargo).matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)].map((m) => limpiarHtml(m[1]));
   let base = lis.length ? lis : limpiarHtml(htmlCorto || htmlLargo).split(/\n|(?<=\.)\s+/);
   base = base
@@ -95,6 +95,7 @@ async function pedir(qs: URLSearchParams) {
   const r = await fetch(url, {
     headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0 (PostsDM)" },
     cache: "no-store",
+    signal: AbortSignal.timeout(20000),
   });
   if (!r.ok) throw new Error(`La tienda respondió ${r.status}`);
   const total = Number(r.headers.get("x-wp-total") || 0);
@@ -122,7 +123,7 @@ function slugDesdeUrl(q: string) {
 }
 
 export async function bajarImagen(src: string) {
-  const r = await fetch(src, { headers: { "User-Agent": "Mozilla/5.0 (PostsDM)" } });
+  const r = await fetch(src, { headers: { "User-Agent": "Mozilla/5.0 (PostsDM)" }, signal: AbortSignal.timeout(8000) });
   if (!r.ok) throw new Error("No se pudo bajar la imagen");
   const tipo = r.headers.get("content-type") || "image/jpeg";
   const buf = await r.arrayBuffer();

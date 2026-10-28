@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, subirImagen } from "@/lib/client";
+import { filasAProductos, parseCsv, type FilaProducto } from "@/lib/csv";
 import type { Marca, Producto, Revendedor } from "@/lib/types";
 import { Aviso, Campo, LogoDM, Modal, Toggle } from "./ui";
 
@@ -428,13 +429,123 @@ type ItemWc = {
   importado: boolean;
 };
 
+function ImportarCsv({ recargar, avisar }: { recargar: () => Promise<void>; avisar: Avisar }) {
+  const [filas, setFilas] = useState<FilaProducto[]>([]);
+  const [archivo, setArchivo] = useState("");
+  const [ocultos, setOcultos] = useState(true);
+  const [actualizar, setActualizar] = useState(false);
+  const [fotos, setFotos] = useState(true);
+  const [noPublicados, setNoPublicados] = useState(false);
+  const [estado, setEstado] = useState<{ corriendo: boolean; hechos: number; nuevos: number; actualizados: number; salteados: number; errores: number } | null>(null);
+  const parar = useRef(false);
+
+  async function leer(f?: File) {
+    if (!f) return;
+    setEstado(null);
+    const buf = await f.arrayBuffer();
+    // WooCommerce exporta en UTF-8; Excel a veces guarda en Windows-1252
+    let texto = new TextDecoder("utf-8").decode(buf);
+    if (texto.includes("\uFFFD")) texto = new TextDecoder("windows-1252").decode(buf);
+    const prods = filasAProductos(parseCsv(texto));
+    setFilas(prods);
+    setArchivo(f.name);
+    if (!prods.length) avisar("No encontré productos en ese archivo", "error");
+  }
+
+  const aImportar = filas.filter((p) => noPublicados || p.publicado);
+
+  async function correr() {
+    parar.current = false;
+    const e = { corriendo: true, hechos: 0, nuevos: 0, actualizados: 0, salteados: 0, errores: 0 };
+    setEstado({ ...e });
+    const tam = fotos ? 15 : 50;
+    for (let i = 0; i < aImportar.length; i += tam) {
+      if (parar.current) break;
+      const lote = aImportar.slice(i, i + tam);
+      try {
+        const r = await api<{ nuevos: number; actualizados: number; salteados: number; errores: number }>("/api/admin/importar-csv", {
+          method: "POST",
+          body: JSON.stringify({ items: lote, ocultos, actualizar, fotos }),
+        });
+        e.nuevos += r.nuevos;
+        e.actualizados += r.actualizados;
+        e.salteados += r.salteados;
+        e.errores += r.errores;
+      } catch {
+        e.errores += lote.length;
+      }
+      e.hechos += lote.length;
+      setEstado({ ...e });
+    }
+    e.corriendo = false;
+    setEstado({ ...e });
+    await recargar();
+    avisar(`Listo: ${e.nuevos} nuevos, ${e.actualizados} actualizados`);
+  }
+
+  const pct = estado && aImportar.length ? Math.round((estado.hechos / aImportar.length) * 100) : 0;
+  const conCodigo = filas.filter((p) => p.sku).length;
+
+  return (
+    <div className="tarjeta space-y-3 border-dm/30 bg-dm/[0.03] p-4">
+      <div>
+        <h3 className="font-extrabold">Importar desde CSV de WooCommerce (recomendado)</h3>
+        <p className="text-[15px] text-neutral-600">
+          En el WordPress: <strong>Productos → Todos los productos → Exportar</strong> → dejá todo marcado → <strong>Generar CSV</strong>. Subí ese archivo acá. Trae nombre, código, precio, categoría, marca y descripción.
+        </p>
+      </div>
+      <label className="btn-ghost w-full cursor-pointer py-3">
+        {archivo ? `📄 ${archivo} · cambiar` : "Elegir archivo CSV"}
+        <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => leer(e.target.files?.[0])} />
+      </label>
+
+      {filas.length > 0 && (
+        <>
+          <p className="text-sm text-neutral-600">
+            <strong>{filas.length}</strong> productos en el archivo · {conCodigo} con código · {filas.filter((p) => !p.publicado).length} no publicados
+          </p>
+          <div className="divide-y divide-neutral-100 rounded-xl bg-white px-3">
+            <Toggle on={ocultos} onChange={setOcultos} label="Importar como ocultos" sub="Después mostrás por marca los que quieras que vean los revendedores" />
+            <Toggle on={actualizar} onChange={setActualizar} label="Actualizar los que ya están" sub="Pisa nombre, precio y beneficios con los del CSV (no toca tus PNG)" />
+            <Toggle on={fotos} onChange={setFotos} label="Intentar bajar la foto de la web" sub="Más lento. Apagalo si vas a cargar todos los PNG" />
+            <Toggle on={noPublicados} onChange={setNoPublicados} label="Incluir productos no publicados" />
+          </div>
+          {estado && (
+            <div className="space-y-1.5">
+              <div className="h-3 overflow-hidden rounded-full bg-neutral-200">
+                <div className="h-full rounded-full bg-dm transition-all" style={{ width: `${pct}%` }} />
+              </div>
+              <p className="text-sm text-neutral-600">
+                {estado.hechos}/{aImportar.length} · {estado.nuevos} nuevos · {estado.actualizados} actualizados · {estado.salteados} ya estaban
+                {estado.errores ? ` · ${estado.errores} con error` : ""}
+                {!estado.corriendo && " · terminado"}
+              </p>
+            </div>
+          )}
+          {estado?.corriendo ? (
+            <button className="btn-ghost w-full" onClick={() => (parar.current = true)}>
+              Pausar
+            </button>
+          ) : (
+            <button className="btn-dm w-full py-3" disabled={!aImportar.length} onClick={correr}>
+              Importar {aImportar.length} productos
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ImportarTodo({ recargar, avisar }: { recargar: () => Promise<void>; avisar: Avisar }) {
   const [ocultos, setOcultos] = useState(true);
   const [saltar, setSaltar] = useState(true);
   const [estado, setEstado] = useState<{ corriendo: boolean; hechos: number; total: number; nuevos: number; errores: number; pagina: number; paginas: number } | null>(null);
   const parar = useRef(false);
+  const [errorTodo, setErrorTodo] = useState("");
 
   async function correr() {
+    setErrorTodo("");
     if (!confirm("Se van a recorrer todos los productos de dentalmedrano.com.ar. Puede tardar varios minutos: dejá esta pestaña abierta. ¿Arrancamos?")) return;
     parar.current = false;
     const e = { corriendo: true, hechos: 0, total: 0, nuevos: 0, errores: 0, pagina: 0, paginas: 1 };
@@ -474,6 +585,7 @@ function ImportarTodo({ recargar, avisar }: { recargar: () => Promise<void>; avi
       await recargar();
       avisar(parar.current ? `Importación pausada: ${e.nuevos} nuevos` : `¡Listo! ${e.nuevos} productos importados`);
     } catch (er) {
+      setErrorTodo((er as Error).message);
       avisar((er as Error).message, "error");
     } finally {
       e.corriendo = false;
@@ -484,11 +596,12 @@ function ImportarTodo({ recargar, avisar }: { recargar: () => Promise<void>; avi
   const pct = estado && estado.total ? Math.round((estado.hechos / estado.total) * 100) : 0;
 
   return (
-    <div className="tarjeta space-y-3 border-dm/30 bg-dm/[0.03] p-4">
+    <div className="tarjeta space-y-3 p-4">
       <div>
-        <h3 className="font-extrabold">Importar todo el catálogo</h3>
-        <p className="text-[15px] text-neutral-600">Recorre la web completa y trae todos los productos. Ideal para la primera carga.</p>
+        <h3 className="font-extrabold">Importar desde la web (automático)</h3>
+        <p className="text-[15px] text-neutral-600">Lee los productos directo de dentalmedrano.com.ar. Si da error, usá el CSV de arriba.</p>
       </div>
+      {errorTodo && <p className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">{errorTodo}</p>}
       <div className="divide-y divide-neutral-100 rounded-xl bg-white px-3">
         <Toggle on={ocultos} onChange={setOcultos} label="Importar como ocultos" sub="Después mostrás por marca los que quieras que vean los revendedores" />
         <Toggle on={saltar} onChange={setSaltar} label="Saltar los que ya están" sub="Más rápido. Apagalo para actualizar precios y fotos" />
@@ -576,6 +689,7 @@ function Importar({ marcas, recargar, avisar }: { marcas: Marca[]; recargar: () 
 
   return (
     <div className="space-y-4">
+      <ImportarCsv recargar={recargar} avisar={avisar} />
       <ImportarTodo recargar={recargar} avisar={avisar} />
       <div className="tarjeta space-y-3 p-4">
         <h3 className="font-extrabold">Importar productos puntuales</h3>
