@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, storage } from "@/lib/client";
 import { generarCopy } from "@/lib/copy";
-import { cargarFuentes, loadImage, renderPost } from "@/lib/render";
-import { FORMATOS, PLANTILLAS, type Formato, type Marca, type Plantilla, type PostConfig, type Producto, type Revendedor } from "@/lib/types";
+import { cargarFuentes, loadImage, renderPost, type Elemento, type Zonas } from "@/lib/render";
+import { FORMATOS, PLANTILLAS, type Etiqueta, type Formato, type Marca, type Plantilla, type PostConfig, type Producto, type Revendedor } from "@/lib/types";
 import Perfil from "./Perfil";
 import { Aviso, Campo, LogoDM, Modal, Seccion, Toggle } from "./ui";
 
-const BADGES = ["NUEVO", "PROMO", "OFERTA", "ÚLTIMAS UNIDADES", "LANZAMIENTO"];
+const BADGES_DEFAULT = ["NUEVO", "PROMO", "OFERTA", "ÚLTIMAS UNIDADES", "LANZAMIENTO"];
+const CERO = { x: 0, y: 0 };
 const LEYENDAS = ["Precio contado", "Hasta agotar stock", "+ IVA", "Precio por unidad"];
 
 function base(rev: Revendedor): PostConfig {
@@ -35,19 +36,28 @@ function base(rev: Revendedor): PostConfig {
     mostrarInstagram: true,
     mostrarDireccion: false,
     escalaProducto: 1,
+    rotacion: 0,
+    fondoLogo: false,
+    posProducto: CERO,
+    posLogo: CERO,
+    posBadge: CERO,
   };
 }
 
 // Preferencias de diseño que se recuerdan entre posteos
 const RECORDAR: (keyof PostConfig)[] = [
   "plantilla", "formato", "fondo", "mostrarCta", "ctaTexto", "mostrarLogoMarca",
-  "mostrarWhatsapp", "mostrarInstagram", "mostrarDireccion", "mostrarBeneficios",
+  "mostrarWhatsapp", "mostrarInstagram", "mostrarDireccion", "mostrarBeneficios", "fondoLogo",
 ];
 
 export default function Editor({ revInicial }: { revInicial: Revendedor }) {
   const [rev, setRev] = useState(revInicial);
   const [marcas, setMarcas] = useState<Marca[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
+  const [etiquetas, setEtiquetas] = useState<string[]>(BADGES_DEFAULT);
+  const zonasRef = useRef<Zonas>({});
+  const arrastre = useRef<{ el: Elemento; x: number; y: number; orig: { x: number; y: number } } | null>(null);
+  const [hover, setHover] = useState<Elemento | null>(null);
   const [cargando, setCargando] = useState(true);
   const [producto, setProducto] = useState<Producto | null>(null);
   const [cfg, setCfg] = useState<PostConfig>(() => base(revInicial));
@@ -69,10 +79,11 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
   };
 
   useEffect(() => {
-    api<{ marcas: Marca[]; productos: Producto[] }>("/api/catalogo")
+    api<{ marcas: Marca[]; productos: Producto[]; etiquetas?: Etiqueta[] }>("/api/catalogo")
       .then((d) => {
         setMarcas(d.marcas);
         setProductos(d.productos);
+        if (d.etiquetas?.length) setEtiquetas(d.etiquetas.map((e) => e.texto));
       })
       .catch(() => avisar("No se pudo cargar el catálogo"))
       .finally(() => setCargando(false));
@@ -105,6 +116,10 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
       mostrarPrecioAnterior: c.mostrarPrecioAnterior && !!p.precio_anterior,
       colorAcento: colorManual ? c.colorAcento : rev.color || m?.color || "#f15922",
       escalaProducto: 1,
+      rotacion: 0,
+      posProducto: CERO,
+      posLogo: CERO,
+      posBadge: CERO,
     }));
     setPicker(false);
   }
@@ -120,7 +135,7 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
         loadImage(rev.logo_url),
       ]);
       if (!vivo || !canvasRef.current) return;
-      renderPost(canvasRef.current, { cfg, producto, marca, revendedor: rev, imgProducto, imgMarca, imgRevendedor });
+      zonasRef.current = renderPost(canvasRef.current, { cfg, producto, marca, revendedor: rev, imgProducto, imgMarca, imgRevendedor });
     })();
     return () => {
       vivo = false;
@@ -130,6 +145,50 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
   useEffect(() => {
     setCopy(producto ? generarCopy(cfg, marca, rev) : "");
   }, [cfg, marca, rev, producto]);
+
+  // ── Arrastrar producto, logo y etiqueta sobre el preview
+  const POS: Record<Elemento, "posProducto" | "posLogo" | "posBadge"> = { producto: "posProducto", logo: "posLogo", badge: "posBadge" };
+
+  function punto(e: React.PointerEvent<HTMLCanvasElement>) {
+    const c = e.currentTarget;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) * c.width) / r.width, y: ((e.clientY - r.top) * c.height) / r.height };
+  }
+  function tocado(p: { x: number; y: number }): Elemento | null {
+    for (const el of ["badge", "logo", "producto"] as Elemento[]) {
+      const z = zonasRef.current[el];
+      if (z && p.x >= z.x - 10 && p.x <= z.x + z.w + 10 && p.y >= z.y - 10 && p.y <= z.y + z.h + 10) return el;
+    }
+    return null;
+  }
+  function onDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!producto) return;
+    const p = punto(e);
+    const el = tocado(p);
+    if (!el) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    arrastre.current = { el, x: p.x, y: p.y, orig: cfg[POS[el]] || CERO };
+    setHover(el);
+  }
+  function onMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    const p = punto(e);
+    const a = arrastre.current;
+    if (!a) {
+      setHover(producto ? tocado(p) : null);
+      return;
+    }
+    const { w, h } = FORMATOS[cfg.formato];
+    const nx = Math.max(-w, Math.min(w, a.orig.x + p.x - a.x));
+    const ny = Math.max(-h, Math.min(h, a.orig.y + p.y - a.y));
+    set(POS[a.el], { x: Math.round(nx), y: Math.round(ny) });
+  }
+  function onUp() {
+    arrastre.current = null;
+  }
+  const hayMovidos = [cfg.posProducto, cfg.posLogo, cfg.posBadge].some((p) => p && (p.x || p.y)) || !!cfg.rotacion;
+  function restablecer() {
+    setCfg((c) => ({ ...c, posProducto: CERO, posLogo: CERO, posBadge: CERO, rotacion: 0 }));
+  }
 
   async function descargar() {
     const c = canvasRef.current;
@@ -214,11 +273,29 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
         <div className="lg:sticky lg:top-20 lg:self-start">
           <div className="tarjeta overflow-hidden p-3 sm:p-4">
             <div className="relative grid place-items-center rounded-xl bg-[repeating-conic-gradient(#efefef_0_25%,#f8f8f8_0_50%)] bg-[length:24px_24px] p-3">
-              <canvas
-                ref={canvasRef}
-                className="block h-auto max-h-[62vh] w-auto max-w-full rounded-lg shadow-xl lg:max-h-[72vh]"
-                style={{ aspectRatio: `${FORMATOS[cfg.formato].w} / ${FORMATOS[cfg.formato].h}` }}
-              />
+              <div className="relative">
+                <canvas
+                  ref={canvasRef}
+                  onPointerDown={onDown}
+                  onPointerMove={onMove}
+                  onPointerUp={onUp}
+                  onPointerCancel={onUp}
+                  onPointerLeave={() => !arrastre.current && setHover(null)}
+                  className={`block h-auto max-h-[62vh] w-auto max-w-full touch-none rounded-lg shadow-xl lg:max-h-[72vh] ${hover ? (arrastre.current ? "cursor-grabbing" : "cursor-grab") : ""}`}
+                  style={{ aspectRatio: `${FORMATOS[cfg.formato].w} / ${FORMATOS[cfg.formato].h}` }}
+                />
+                {hover && zonasRef.current[hover] && (
+                  <div
+                    className="pointer-events-none absolute rounded-lg border-2 border-dashed border-dm/80"
+                    style={{
+                      left: `${(zonasRef.current[hover]!.x / FORMATOS[cfg.formato].w) * 100}%`,
+                      top: `${(zonasRef.current[hover]!.y / FORMATOS[cfg.formato].h) * 100}%`,
+                      width: `${(zonasRef.current[hover]!.w / FORMATOS[cfg.formato].w) * 100}%`,
+                      height: `${(zonasRef.current[hover]!.h / FORMATOS[cfg.formato].h) * 100}%`,
+                    }}
+                  />
+                )}
+              </div>
               {!producto && (
                 <div className="absolute inset-0 grid place-items-center p-6">
                   <button onClick={() => setPicker(true)} className="btn-dm px-6 py-4 text-base shadow-lg">
@@ -228,6 +305,16 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
               )}
             </div>
           </div>
+          {producto && (
+            <p className="mt-2 text-center text-sm text-neutral-500">
+              Arrastrá el producto, el logo o la etiqueta para moverlos
+              {hayMovidos && (
+                <button className="ml-2 font-bold text-dm" onClick={restablecer}>
+                  Restablecer
+                </button>
+              )}
+            </p>
+          )}
           <div className="mt-3 hidden gap-3 lg:flex">
             <button className="btn-dm flex-1 py-3.5 text-base" disabled={!producto || descargando} onClick={descargar}>
               {descargando ? "Generando…" : "Descargar imagen"}
@@ -286,7 +373,7 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
               {(Object.keys(PLANTILLAS) as Plantilla[]).map((p) => (
                 <button
                   key={p}
-                  onClick={() => set("plantilla", p)}
+                  onClick={() => setCfg((c) => ({ ...c, plantilla: p, posProducto: CERO, posLogo: CERO, posBadge: CERO }))}
                   className={`rounded-xl border-2 p-2.5 text-left transition ${cfg.plantilla === p ? "border-dm bg-dm/5" : "border-neutral-200"}`}
                 >
                   <MiniPlantilla p={p} color={cfg.colorAcento} />
@@ -302,7 +389,7 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
                 {(Object.keys(FORMATOS) as Formato[]).map((f) => (
                   <button
                     key={f}
-                    onClick={() => set("formato", f)}
+                    onClick={() => setCfg((c) => ({ ...c, formato: f, posProducto: CERO, posLogo: CERO, posBadge: CERO }))}
                     className={`flex flex-col items-center gap-1.5 rounded-xl border-2 py-2.5 text-xs font-bold transition ${cfg.formato === f ? "border-dm bg-dm/5 text-dm" : "border-neutral-200 text-neutral-600"}`}
                   >
                     <span
@@ -370,6 +457,33 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
                 />
               </Campo>
             )}
+            {producto && (
+              <div>
+                <span className="mb-1.5 block text-sm font-semibold text-neutral-600">Rotación del producto: {cfg.rotacion}°</span>
+                <div className="flex items-center gap-2">
+                  <button className="btn-ghost px-3 py-1.5" onClick={() => set("rotacion", ((cfg.rotacion - 15 + 540) % 360) - 180)} aria-label="Rotar a la izquierda">
+                    ↺
+                  </button>
+                  <input
+                    type="range"
+                    min={-180}
+                    max={180}
+                    step={1}
+                    value={cfg.rotacion}
+                    onChange={(e) => set("rotacion", Number(e.target.value))}
+                    className="w-full accent-[#f15922]"
+                  />
+                  <button className="btn-ghost px-3 py-1.5" onClick={() => set("rotacion", ((cfg.rotacion + 15 + 540) % 360) - 180)} aria-label="Rotar a la derecha">
+                    ↻
+                  </button>
+                </div>
+                {cfg.rotacion !== 0 && (
+                  <button className="mt-1 text-sm text-neutral-500 underline" onClick={() => set("rotacion", 0)}>
+                    Enderezar
+                  </button>
+                )}
+              </div>
+            )}
           </Seccion>
 
           <Seccion titulo="Textos" numero={3}>
@@ -414,7 +528,7 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
               {cfg.mostrarBadge && (
                 <div className="mt-1 space-y-2">
                   <div className="flex flex-wrap gap-2">
-                    {BADGES.map((b) => (
+                    {etiquetas.map((b) => (
                       <button key={b} onClick={() => set("badgeTexto", b)} className={`chip ${cfg.badgeTexto === b ? "chip-on" : ""}`}>
                         {b}
                       </button>
@@ -456,6 +570,9 @@ export default function Editor({ revInicial }: { revInicial: Revendedor }) {
             {cfg.mostrarCta && <input className="campo" maxLength={32} value={cfg.ctaTexto} onChange={(e) => set("ctaTexto", e.target.value)} />}
             <div className="divide-y divide-neutral-100 border-t border-neutral-100">
               <Toggle on={cfg.mostrarLogoMarca} onChange={(v) => set("mostrarLogoMarca", v)} label="Logo de la marca" />
+              {cfg.mostrarLogoMarca && (
+                <Toggle on={cfg.fondoLogo} onChange={(v) => set("fondoLogo", v)} label="Fondo blanco detrás del logo" sub="Útil si el logo no se lee sobre el fondo" />
+              )}
               <Toggle on={cfg.mostrarWhatsapp} onChange={(v) => set("mostrarWhatsapp", v)} label="Mi WhatsApp" sub={rev.whatsapp || "No cargado"} />
               <Toggle on={cfg.mostrarInstagram} onChange={(v) => set("mostrarInstagram", v)} label="Mi Instagram" sub={rev.instagram ? "@" + rev.instagram.replace(/^@/, "") : "No cargado"} />
               <Toggle on={cfg.mostrarDireccion} onChange={(v) => set("mostrarDireccion", v)} label="Mi dirección" sub={[rev.direccion, rev.ciudad].filter(Boolean).join(", ") || "No cargada"} />

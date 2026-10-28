@@ -173,22 +173,19 @@ function contain(iw: number, ih: number, x: number, y: number, w: number, h: num
   return { x: x + (w - dw) / 2, y: y + (h - dh) / 2, w: dw, h: dh };
 }
 
+// Logo oficial de WhatsApp (trazado de 24x24)
+const WA_PATH =
+  "M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z";
+let waPath: Path2D | null = null;
+
 function iconoWhatsapp(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string) {
+  if (!waPath) waPath = new Path2D(WA_PATH);
+  const k = (r * 2) / 24;
   ctx.save();
-  ctx.strokeStyle = color;
+  ctx.translate(cx - r, cy - r);
+  ctx.scale(k, k);
   ctx.fillStyle = color;
-  ctx.lineWidth = r * 0.18;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r * 0.82, Math.PI * 0.72, Math.PI * 2.62);
-  ctx.lineTo(cx - r * 0.95, cy + r * 0.95);
-  ctx.closePath();
-  ctx.stroke();
-  // auricular
-  ctx.lineWidth = r * 0.26;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.arc(cx, cy, r * 0.36, Math.PI * 0.62, Math.PI * 1.25);
-  ctx.stroke();
+  ctx.fill(waPath);
   ctx.restore();
 }
 
@@ -254,7 +251,6 @@ type Tema = {
   footerBg: string;
   footerTexto: string;
   footerSlim: boolean;
-  logoPill: boolean;
   centrado: boolean;
   badgeBg: string;
   badgeTexto: string;
@@ -292,7 +288,6 @@ function tema(cfg: PostConfig): Tema {
       footerBg: "#ffffff",
       footerTexto: "#16181d",
       footerSlim: false,
-      logoPill: true,
       centrado: true,
       badgeBg: t === "#ffffff" ? "#ffffff" : "#16181d",
       badgeTexto: t === "#ffffff" ? a : "#ffffff",
@@ -317,7 +312,6 @@ function tema(cfg: PostConfig): Tema {
       footerBg: "transparent",
       footerTexto: oscuro ? "#ffffff" : "#18191b",
       footerSlim: true,
-      logoPill: oscuro,
       centrado: true,
       badgeBg: a,
       badgeTexto: sobreA,
@@ -353,7 +347,6 @@ function tema(cfg: PostConfig): Tema {
     footerBg: oscuro ? a : "#16181d",
     footerTexto: oscuro ? sobreA : "#ffffff",
     footerSlim: false,
-    logoPill: oscuro,
     centrado: false,
     badgeBg: a,
     badgeTexto: sobreA,
@@ -375,7 +368,14 @@ export type RenderInput = {
   imgRevendedor: LoadedImage | null;
 };
 
-export function renderPost(canvas: HTMLCanvasElement, input: RenderInput) {
+export type Rect = { x: number; y: number; w: number; h: number };
+export type Elemento = "producto" | "logo" | "badge";
+export type Zonas = Partial<Record<Elemento, Rect>>;
+let zonas: Zonas = {};
+const off = (p?: { x: number; y: number }) => ({ x: p?.x || 0, y: p?.y || 0 });
+
+export function renderPost(canvas: HTMLCanvasElement, input: RenderInput): Zonas {
+  zonas = {};
   const { cfg } = input;
   const { w: W, h: H } = FORMATOS[cfg.formato];
   canvas.width = W;
@@ -394,7 +394,6 @@ export function renderPost(canvas: HTMLCanvasElement, input: RenderInput) {
   /* Header */
   const headerY = safeTop + pad - (cfg.plantilla === "destacado" ? 4 : 10);
   const headerH = 96;
-  dibujarHeader(ctx, input, t, pad, headerY, W - pad * 2, headerH);
 
   /* Footer */
   const footerH = t.footerSlim ? 120 : cfg.formato === "cuadrado" ? 136 : 156;
@@ -411,6 +410,10 @@ export function renderPost(canvas: HTMLCanvasElement, input: RenderInput) {
   const split = cfg.formato === "cuadrado" && cfg.plantilla !== "minimal";
   if (split) cuerpoSplit(ctx, input, t, pad, top, W - pad, bottom);
   else cuerpoStack(ctx, input, t, pad, top, W - pad, bottom);
+
+  // logo y etiqueta al final para que queden arriba del producto si los mueven
+  dibujarHeader(ctx, input, t, pad, headerY, W - pad * 2, headerH);
+  return zonas;
 }
 
 function dibujarHeader(
@@ -423,9 +426,13 @@ function dibujarHeader(
   h: number,
 ) {
   const centrarLogo = t.centrado && !cfg.mostrarBadge;
+  const pill = !!cfg.fondoLogo;
   if (cfg.mostrarLogoMarca && (imgMarca || marca)) {
+    const o = off(cfg.posLogo);
+    ctx.save();
+    ctx.translate(o.x, o.y);
     const maxW = 300;
-    const maxH = h - (t.logoPill ? 28 : 8);
+    const maxH = h - (pill ? 28 : 8);
     let lw = 0;
     let lh = 0;
     if (imgMarca) {
@@ -437,10 +444,11 @@ function dibujarHeader(
       lw = ctx.measureText(marca!.nombre.toUpperCase()).width;
       lh = 40;
     }
-    const px = t.logoPill ? 30 : 0;
+    const px = pill ? 30 : 0;
     const boxW = lw + px * 2;
     const bx = centrarLogo ? x + (w - boxW) / 2 : x;
-    if (t.logoPill) {
+    zonas.logo = { x: bx + o.x, y: y + o.y, w: boxW, h };
+    if (pill) {
       ctx.fillStyle = "#ffffff";
       rr(ctx, bx, y, boxW, h, h / 2);
       ctx.fill();
@@ -448,14 +456,15 @@ function dibujarHeader(
     const ly = y + (h - lh) / 2;
     if (imgMarca) {
       ctx.save();
-      if (!imgMarca.transparente && (t.claro || t.logoPill)) ctx.globalCompositeOperation = "multiply";
+      if (!imgMarca.transparente && (t.claro || pill)) ctx.globalCompositeOperation = "multiply";
       ctx.drawImage(imgMarca.img, bx + px, ly, lw, lh);
       ctx.restore();
     } else {
-      ctx.fillStyle = t.logoPill ? (marca!.color || "#16181d") : t.texto;
+      ctx.fillStyle = pill ? marca!.color || "#16181d" : t.texto;
       ctx.font = font(800, 40, F_TITULO);
       ctx.fillText(marca!.nombre.toUpperCase(), bx + px, y + h / 2 + 14);
     }
+    ctx.restore();
   }
   if (cfg.mostrarBadge && cfg.badgeTexto.trim()) {
     const txt = cfg.badgeTexto.trim().toUpperCase();
@@ -468,11 +477,18 @@ function dibujarHeader(
     const tw = ctx.measureText(txt).width;
     const bw = tw + 64;
     const bh = 78;
-    const bx = x + w - bw;
-    const by = y + (h - bh) / 2;
+    const o = off(cfg.posBadge);
+    const bx = x + w - bw + o.x;
+    const by = y + (h - bh) / 2 + o.y;
+    zonas.badge = { x: bx, y: by, w: bw, h: bh };
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.18)";
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 6;
     ctx.fillStyle = t.badgeBg;
     rr(ctx, bx, by, bw, bh, bh / 2);
     ctx.fill();
+    ctx.restore();
     ctx.fillStyle = t.badgeTexto;
     ctx.fillText(txt, bx + 32, by + bh / 2 + s * 0.36);
   }
@@ -636,55 +652,76 @@ function dibujarProducto(
   h: number,
 ) {
   if (h < 60 || w < 60) return;
-  const cx = x + w / 2;
-  const cy = y + h / 2;
+  const cx0 = x + w / 2;
+  const cy0 = y + h / 2;
   const d = Math.min(w, h);
   if (t.circulo) {
     ctx.fillStyle = t.circulo;
     ctx.beginPath();
-    ctx.arc(cx, cy, d * 0.48, 0, Math.PI * 2);
+    ctx.arc(cx0, cy0, d * 0.48, 0, Math.PI * 2);
     ctx.fill();
   }
+  const o = off(cfg.posProducto);
+  const cx = cx0 + o.x;
+  const cy = cy0 + o.y;
   if (!imgProducto) {
     ctx.fillStyle = rgba(t.texto === "#ffffff" ? "#ffffff" : "#000000", 0.25);
     ctx.font = font(600, 30, F_CUERPO);
     ctx.textAlign = "center";
     ctx.fillText("Sin imagen", cx, cy + 10);
     ctx.textAlign = "left";
+    zonas.producto = { x: cx - d * 0.4, y: cy - d * 0.4, w: d * 0.8, h: d * 0.8 };
     return;
   }
-  const esc = Math.max(0.5, Math.min(1.4, cfg.escalaProducto || 1));
+  const esc = Math.max(0.4, Math.min(1.8, cfg.escalaProducto || 1));
   const base = t.circulo ? 0.8 : 0.94;
   const bw = (t.circulo ? d : w) * base * esc;
   const bh = (t.circulo ? d : h) * base * esc;
   const r = contain(imgProducto.img.width, imgProducto.img.height, cx - bw / 2, cy - bh / 2, bw, bh);
+  const ang = ((cfg.rotacion || 0) * Math.PI) / 180;
+  // caja que ocupa el producto ya rotado (para poder agarrarlo)
+  const cos = Math.abs(Math.cos(ang));
+  const sin = Math.abs(Math.sin(ang));
+  const zw = r.w * cos + r.h * sin;
+  const zh = r.w * sin + r.h * cos;
+  zonas.producto = { x: cx - zw / 2, y: cy - zh / 2, w: zw, h: zh };
+
+  const rotar = () => {
+    ctx.translate(cx, cy);
+    ctx.rotate(ang);
+    ctx.translate(-cx, -cy);
+  };
 
   if (!imgProducto.transparente && (t.panelBlanco || !t.claro) && !t.circulo?.startsWith("#ffffff")) {
     // foto con fondo blanco sobre fondo oscuro: tarjeta blanca
     ctx.save();
+    rotar();
     ctx.shadowColor = "rgba(0,0,0,0.35)";
     ctx.shadowBlur = 50;
     ctx.shadowOffsetY = 18;
     ctx.fillStyle = "#ffffff";
     rr(ctx, r.x - 28, r.y - 28, r.w + 56, r.h + 56, 36);
     ctx.fill();
-    ctx.restore();
+    ctx.shadowColor = "transparent";
     ctx.drawImage(imgProducto.img, r.x, r.y, r.w, r.h);
+    ctx.restore();
     return;
   }
 
-  // sombra en el piso
+  // sombra en el piso (no rota)
   ctx.save();
-  const sg = ctx.createRadialGradient(cx, r.y + r.h, 0, cx, r.y + r.h, r.w * 0.5);
+  const piso = cy + zh / 2;
+  const sg = ctx.createRadialGradient(cx, piso, 0, cx, piso, zw * 0.5);
   sg.addColorStop(0, "rgba(0,0,0,0.22)");
   sg.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = sg;
   ctx.beginPath();
-  ctx.ellipse(cx, r.y + r.h - 6, r.w * 0.45, 26, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, piso - 6, zw * 0.45, 26, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
   ctx.save();
+  rotar();
   if (!imgProducto.transparente) ctx.globalCompositeOperation = "multiply";
   else {
     ctx.shadowColor = "rgba(0,0,0,0.18)";
@@ -854,13 +891,13 @@ function dibujarTexto(
     ctx.font = font(700, s, F_TITULO);
     const tw = ctx.measureText(m.cta).width;
     const bh = 76 * escala;
-    const iconW = s * 1.2;
+    const iconW = s * 1.4;
     const bw = Math.min(w, tw + iconW + 64);
     const bx = centrado ? x + (w - bw) / 2 : x;
     ctx.fillStyle = t.ctaBg;
     rr(ctx, bx, cy, bw, bh, bh / 2);
     ctx.fill();
-    iconoWhatsapp(ctx, bx + 32 + s * 0.45, cy + bh / 2, s * 0.45, t.ctaTexto);
+    iconoWhatsapp(ctx, bx + 32 + s * 0.55, cy + bh / 2, s * 0.55, t.ctaTexto);
     ctx.fillStyle = t.ctaTexto;
     ctx.textAlign = "left";
     ctx.fillText(m.cta, bx + 32 + iconW, cy + bh / 2 + s * 0.36);

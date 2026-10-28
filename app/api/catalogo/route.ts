@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const sb = db();
   try {
-    const [marcas, productos] = await Promise.all([
+    const [marcas, productos, etiquetas] = await Promise.all([
       todasLasFilas(() => sb.from("posts_marcas").select("*").eq("activo", true).order("orden").order("nombre").order("id")),
       todasLasFilas(() =>
         sb
@@ -16,8 +16,9 @@ export async function GET() {
           .order("nombre")
           .order("id"),
       ),
+      todasLasFilas(() => sb.from("posts_etiquetas").select("id, texto, orden").order("orden").order("texto").order("id")),
     ]);
-    return json({ marcas, productos });
+    return json({ marcas, productos, etiquetas });
   } catch {
     return json({ error: "No se pudo cargar el catálogo" }, 500);
   }

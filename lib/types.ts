@@ -65,7 +65,16 @@ export type PostConfig = {
   mostrarInstagram: boolean;
   mostrarDireccion: boolean;
   escalaProducto: number;
+  rotacion: number;
+  fondoLogo: boolean;
+  posProducto: Punto;
+  posLogo: Punto;
+  posBadge: Punto;
 };
+
+export type Punto = { x: number; y: number };
+
+export type Etiqueta = { id: string; texto: string; orden: number };
 
 export const FORMATOS: Record<Formato, { w: number; h: number; label: string }> = {
   cuadrado: { w: 1080, h: 1080, label: "Feed cuadrado" },

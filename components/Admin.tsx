@@ -3,15 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, subirImagen } from "@/lib/client";
 import { filasAProductos, parseCsv, type FilaProducto } from "@/lib/csv";
-import type { Marca, Producto, Revendedor } from "@/lib/types";
+import type { Etiqueta, Marca, Producto, Revendedor } from "@/lib/types";
 import { Aviso, Campo, LogoDM, Modal, Toggle } from "./ui";
 
-type Tab = "productos" | "importar" | "png" | "marcas" | "revendedores" | "stats";
+type Tab = "productos" | "importar" | "png" | "marcas" | "etiquetas" | "revendedores" | "stats";
 const TABS: { id: Tab; label: string }[] = [
   { id: "productos", label: "Productos" },
   { id: "importar", label: "Importar de la web" },
   { id: "png", label: "Fotos PNG" },
   { id: "marcas", label: "Marcas" },
+  { id: "etiquetas", label: "Etiquetas" },
   { id: "revendedores", label: "Revendedores" },
   { id: "stats", label: "Estadísticas" },
 ];
@@ -107,6 +108,7 @@ export default function Admin() {
         {tab === "importar" && <Importar marcas={marcas} recargar={cargar} avisar={avisar} />}
         {tab === "png" && <FotosPng productos={productos} recargar={cargar} avisar={avisar} />}
         {tab === "marcas" && <Marcas marcas={marcas} productos={productos} recargar={cargar} avisar={avisar} />}
+        {tab === "etiquetas" && <Etiquetas avisar={avisar} />}
         {tab === "revendedores" && <Revendedores revs={revs} recargar={cargar} avisar={avisar} />}
         {tab === "stats" && <Stats revs={revs} productos={productos} marcas={marcas} />}
       </main>
@@ -1045,6 +1047,80 @@ function FilaMarca({ m, n, guardar, borrar, avisar }: { m: Marca; n: number; gua
           Borrar
         </button>
       </div>
+    </div>
+  );
+}
+
+/* ───────────── Etiquetas ───────────── */
+
+function Etiquetas({ avisar }: { avisar: Avisar }) {
+  const [lista, setLista] = useState<Etiqueta[]>([]);
+  const [nueva, setNueva] = useState("");
+  const cargar = useCallback(() => api<Etiqueta[]>("/api/admin/etiquetas").then(setLista).catch((e) => avisar(e.message, "error")), [avisar]);
+  useEffect(() => {
+    cargar();
+  }, [cargar]);
+
+  async function agregar() {
+    if (!nueva.trim()) return;
+    try {
+      await api("/api/admin/etiquetas", { method: "POST", body: JSON.stringify({ texto: nueva, orden: lista.length + 1 }) });
+      setNueva("");
+      await cargar();
+    } catch (e) {
+      avisar((e as Error).message, "error");
+    }
+  }
+  async function borrar(e: Etiqueta) {
+    await api(`/api/admin/etiquetas?id=${e.id}`, { method: "DELETE" });
+    await cargar();
+  }
+  async function mover(i: number, dir: -1 | 1) {
+    const j = i + dir;
+    if (j < 0 || j >= lista.length) return;
+    const a = lista[i];
+    const b = lista[j];
+    await Promise.all([
+      api("/api/admin/etiquetas", { method: "PUT", body: JSON.stringify({ id: a.id, orden: j + 1 }) }),
+      api("/api/admin/etiquetas", { method: "PUT", body: JSON.stringify({ id: b.id, orden: i + 1 }) }),
+    ]);
+    await cargar();
+  }
+
+  return (
+    <div className="max-w-xl space-y-4">
+      <p className="text-[15px] text-neutral-600">
+        Son las etiquetas rápidas que ven los revendedores (NUEVO, PROMO…). Igual pueden escribir una propia.
+      </p>
+      <div className="tarjeta divide-y divide-neutral-100">
+        {lista.map((e, i) => (
+          <div key={e.id} className="flex items-center gap-2 p-3">
+            <span className="rounded-full bg-dm px-3 py-1 font-display text-sm font-extrabold text-white">{e.texto}</span>
+            <div className="ml-auto flex items-center gap-1">
+              <button className="chip px-2.5 py-1" disabled={i === 0} onClick={() => mover(i, -1)} aria-label="Subir">
+                ↑
+              </button>
+              <button className="chip px-2.5 py-1" disabled={i === lista.length - 1} onClick={() => mover(i, 1)} aria-label="Bajar">
+                ↓
+              </button>
+              <button className="px-2 text-sm font-semibold text-red-600" onClick={() => borrar(e)}>
+                Sacar
+              </button>
+            </div>
+          </div>
+        ))}
+        {!lista.length && <p className="p-4 text-sm text-neutral-400">No hay etiquetas.</p>}
+      </div>
+      <form
+        className="tarjeta flex gap-2 p-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          agregar();
+        }}
+      >
+        <input className="campo uppercase" maxLength={22} placeholder="Nueva etiqueta (ej: 2X1)" value={nueva} onChange={(e) => setNueva(e.target.value)} />
+        <button className="btn-dm shrink-0">Agregar</button>
+      </form>
     </div>
   );
 }
